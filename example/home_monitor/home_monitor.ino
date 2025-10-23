@@ -20,13 +20,15 @@
   * Caveat lector: this code reflects a triumph of function
   * over form, meaning that it stands the way it happened
   * to have come together at the moment it began to work 
-  * as I intended. It is not as well-organized as I like
+  * as I intended. It is not as well-organized as I might like
   * nor does it contain all of the comments I wish to include.
-  * Code can stop running if it encounters runtime errors. 
-  * Follow progress in a serial monitor until you are sure it works.
-  * The code is provided here for illustration purposes 
-  * to accompany an article about a home monitor system.
-  * No claim is made regarding any other use for it.
+  * Code can stop running if it encounters certain runtime errors. 
+  * It is recommended to have a Serial Monitor connected when running, 
+  * to view the Serial Output as an aid to understanding the code.
+  * To be clear: the code does not require a serial monitor.
+  * It is designed to operate even when Serial output has nowhere to go. 
+  * The code is provided here for illustration purposes, only, 
+  * No claim is made regarding any other use for the code.
   * 
   * 
   * This code is free software; you can redistribute it and/or
@@ -34,7 +36,7 @@
   * License as published by the Free Software Foundation; either
   * version 2.1 of the License, or (at your option) any later version.
   *
-  * This code is distributed in the hope that it will be useful,
+  * This code is distributed in the hope that it will be informative,
   * but WITHOUT ANY WARRANTY; without even the implied warranty of
   * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
   * Lesser General Public License for more details.
@@ -45,19 +47,21 @@
   * Boston, MA  02111-1307  USA
   */
 
-// 
-#include <DHT.h>              // Adafruit library
-#include <DHT_U.h>            // Adafruit dependency
-#include <DS3231.h>           // DS3231 Real Time Clock (by Andrew Wickert)
+/* The following libraries are included with Arduino IDE */
 #include <Wire.h>             // I2C for DS3231 (included with Arduino IDE)
 #include <SPI.h>              // SPI for SD card device (included with Arduino ODE)
 #include <SD.h>               // control SD card device (included with Arduino IDE)
-#include "WiFiEsp.h"          // talk to the 8266 (by bportaluri)
-#include "ThingSpeak.h"       // talk to ThingSpeak (by MathWorks)
+
+/* These additional libraries need to be installed using the Library Manager */
+#include <DHT.h>              // Adafruit library
+#include <DHT_U.h>            // Adafruit dependency
+#include <DS3231.h>           // DS3231 Real Time Clock (by Andrew Wickert)
+#include <WiFiEsp.h>          // talk to the 8266 (by bportaluri)
+#include <ThingSpeak.h>       // talk to ThingSpeak (by MathWorks)
 #include <TM1637Display.h>    // LED display module (by Avishay Orpaz)
 
-// store this user-created file in the folder containing this Arduino program
-#include "secrets.h"          // edit with your WiFi and Thingspeak access codes
+// create this file in the same folder that contains this Arduino program
+#include "secrets.h"          // supply your WiFi and Thingspeak access codes
 
 // definitions
 #define DHTPIN 12             // DHT data on digital pin 12
@@ -68,7 +72,7 @@
 #define TM1637_DIO 39         // TM1637 Data I/O
 #define TM1637_CLK 41         // TM1637 Clock signal
 
-/* objects */
+/* software objects */
 
 // DHT sensor object
 DHT dht(DHTPIN, DHTTYPE);
@@ -113,9 +117,12 @@ bool sdCardInitialized = false;
 bool DS18B20_Found = false;
 
 // clock-related declarations
-volatile bool alarmEventFlag = false; 
+volatile bool alarmEventFlag = false;
+
 // alarm interrupt handler changes flag to true
+// Note: this is the actual function definition, not a prototype
 void rtcISR() {alarmEventFlag = true;}
+
 // alarm-related function prototypes
 DateTime addSecondsToTime( int secondsToAdd, DateTime theTime);
 void setTheAlarm(DateTime alarmTime);
@@ -173,7 +180,9 @@ void setup() {
   
   /* configure Arduino to act on a signal from the DS3231 RTC */
   attachInterrupt(
+      // respond to signal on pin 2
       digitalPinToInterrupt(CLOCK_INTERRUPT_PIN),
+      // call function 'rtcISR' upon receiving a FALLING signal
       rtcISR, FALLING
   );
 
