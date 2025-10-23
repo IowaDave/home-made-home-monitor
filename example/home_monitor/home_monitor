@@ -1,0 +1,514 @@
+/*
+ * Upstairs Monitor
+ * Send to ThingSpeak at 10-minute intervals
+ * as timed by DH3231 Real Time Clock:
+ *    + indoor temperature (DHT22)
+ *    + indoor humidity (DHT22)
+ *    + outdoor temperature (thermistor via radio)
+ *
+ * MODIFYING 17Oct2025 to add directly connected thermistor
+ *    
+ * HARDWARE: Arduino Mega2560 + ESP-01S
+ * 
+ */
+
+ /*
+  * NOTE: Deliberate code-hangs at
+  * + line 106, 171
+  */
+
+// libraries
+#include <DHT.h>              // Adafruit library
+#include <DHT_U.h>            // Adafruit dependency?
+#include <DS3231.h>           // DS3231 Real Time Clock
+#include <Wire.h>             // I2C for DS3231
+#include <SPI.h>              // SPI for SD card device
+#include <SD.h>               // control SD card device
+#include "WiFiEsp.h"          // talk to the 8266
+#include "secrets.h"
+#include "ThingSpeak.h"       // talk to ThingSpeak
+#include <TM1637Display.h>     // LED display module
+
+// definitions
+#define DHTPIN 12             // DHT data on digital pin 12
+#define DHTTYPE DHT22
+#define CLOCK_INTERRUPT_PIN 2 // DS3231 SQW connects to digital 2
+#define SD_CHIP_SELECT 53     // selects SD card device
+#define ESP_BAUDRATE  9600    // not 115200 because slower is surer
+#define TM1637_DIO 39         // TM1637 Data I/O
+#define TM1637_CLK 41         // TM1637 Clock signal
+
+// objects
+
+// DHT sensor object
+DHT dht(DHTPIN, DHTTYPE);
+
+// DS3231 real time clock object
+DS3231 RTClock; // instantiate real time clock object
+
+// DateTime object
+DateTime clockData;
+
+// SD file object
+File dataFile;
+
+// OneWire object
+// OneWire ds1820(ONEWIRE_PIN); 
+
+// ESP8266 WiFi object
+WiFiEspClient espClient;
+
+// TM1637 object
+TM1637Display display(TM1637_CLK, TM1637_DIO);
+double therm, thermAvg;
+float outsideAirTemperature;    // must be type float to work with thingspeak library
+unsigned char thermCount = 0;
+
+// WiFi variables
+char ssid[] = SECRET_SSID;
+char pass[] = SECRET_PASS;
+// ThingSpeak variables
+unsigned long myChannelNumber = SECRET_CH_ID;
+const char * myWriteAPIKey = SECRET_WRITE_APIKEY;
+
+// other global variables
+bool doneOnce = true;           // change to true after done once. why is this here?
+float humidity;                 // used with thingspeak library
+float indoorTemperature;        // used with thingspeak library
+bool sdCardInitialized = false;
+bool DS18B20_Found = false;
+
+// clock-related declarations
+volatile bool alarmEventFlag = false; 
+// alarm interrupt handler changes flag to true
+void rtcISR() {alarmEventFlag = true;}
+// alarm-related function prototypes
+DateTime addSecondsToTime( int secondsToAdd, DateTime theTime);
+void setTheAlarm(DateTime alarmTime);
+void set_Ten_Minute_Alarm(DateTime referenceTime);
+void printDateAndTime(DateTime referenceTime);
+
+// OAT-related declarations
+float getOAT ();                  // has to be float for thingspeak library
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(9600); // Serial Monitor
+  Serial1.begin(9600); // HW Serial1 for ESP-01
+  dht.begin(); // start the DHT22 sensor
+  Wire.begin(); // start I2C
+
+  // start up the data card
+  Serial.print("Initializing SD card...");
+
+  if (!SD.begin(SD_CHIP_SELECT)) {
+    Serial.println("SD CARD initialization failed!");
+  } else {
+    sdCardInitialized = true;
+    Serial.println("SD card initialized OK");
+  }
+
+  // write the data table header to the file
+  if (sdCardInitialized) {
+    // read the clock
+    clockData = RTClib::now();
+
+    dataFile = SD.open("upstairs.txt", FILE_WRITE);
+    dataFile.println("Upstairs Temperatures and Humidity");
+    dataFile.print("Data logging initiated at ");
+    // the current date
+    dataFile.print(clockData.month()); dataFile.print("/");
+    dataFile.print(clockData.day()); dataFile.print("/");
+    dataFile.print(clockData.year());
+    dataFile.print("\t"); // tab
+
+    // the current time
+    dataFile.print(clockData.hour()); dataFile.print(":");
+    if (clockData.minute() < 10) dataFile.print("0");
+    dataFile.print(clockData.minute()); dataFile.print(":");
+    if (clockData.second() < 10) dataFile.print("0");
+    dataFile.println(clockData.second());
+
+    // the field headers
+    dataFile.println("Date\tTime\tIndoor_T\tIndoor_H\tOAT");
+
+    // close the file
+    dataFile.close();
+  }
+  
+  attachInterrupt(
+      digitalPinToInterrupt(CLOCK_INTERRUPT_PIN),
+      rtcISR, FALLING
+  );
+
+Serial.println("Fetching clock data.");
+  // initialize the alarm on the clock
+  // read the clock
+  clockData = RTClib::now();
+Serial.println("Printing clock data.");
+  printDateAndTime(clockData);
+  Serial.println();
+  Serial.println("Did you see any clock data, above?");
+  
+  set_Ten_Minute_Alarm(clockData);
+
+  // get the ESP-01 and ThingSpeak going
+  Serial.print("Searching for ESP8266..."); 
+  // initialize ESP module
+  WiFi.init(&Serial1);
+
+  // check for the presence of the shield
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present");
+    // don't continue
+    while (true);
+  }
+  Serial.println("found it!");
+
+  Serial.println("Initializing Thingspeak");
+  ThingSpeak.begin(espClient);  // Initialize ThingSpeak
+  Serial.println("ThingSpeak initialized!"); 
+
+   //TM1637
+  display.setBrightness(0x01);  /* level 1 in range of 0 - 15 */
+  display.showNumberDec(8888);
+
+} // end of setup()
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  if (alarmEventFlag == true) {
+    // read the clock
+    clockData = RTClib::now();
+    // advance the alarm
+    set_Ten_Minute_Alarm(clockData);
+    // turn off this code's alarm flag
+    alarmEventFlag = false;
+    
+    // print the date and time to the Serial Monitor
+    printDateAndTime(clockData);
+    
+    // add spaces
+    Serial.print("  ");
+    
+    // obtain the temperatures and humidity...
+
+    outsideAirTemperature = getOAT();               // returns fahrenheit */
+    humidity = dht.readHumidity();
+    indoorTemperature = dht.readTemperature(true);  // true = Farhrenheit
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(humidity) || isnan(indoorTemperature)) {
+      Serial.println(F("Failed to read from DHT sensor!"));
+      return;
+    }
+    // .. to the serial monitor
+    Serial.print("Indoor temperature: ");
+    Serial.print(indoorTemperature);  
+    Serial.print("  Humidity: ");
+    Serial.print(humidity);
+    Serial.print("  OAT: ");
+    Serial.println(outsideAirTemperature);
+  
+    // tab-delimited data to the SD card 
+
+    if (sdCardInitialized) {
+      // write all that again to the file
+      // open the file. 
+      dataFile = SD.open("upstairs.txt", FILE_WRITE);
+
+      // the current date
+      dataFile.print(clockData.month()); dataFile.print("/");
+      dataFile.print(clockData.day()); dataFile.print("/");
+      dataFile.print(clockData.year());
+      dataFile.print("\t"); // tab
+
+      // the current time
+      dataFile.print(clockData.hour()); dataFile.print(":");
+      if (clockData.minute() < 10) dataFile.print("0");
+      dataFile.print(clockData.minute()); dataFile.print(":");
+      if (clockData.second() < 10) dataFile.print("0");
+      dataFile.print(clockData.second());
+      dataFile.print("\t"); // tab
+    
+      // the data
+      dataFile.print(indoorTemperature);  
+      dataFile.print("\t"); // tab
+      dataFile.print(humidity);
+      dataFile.print("\t"); // tab
+      dataFile.print(outsideAirTemperature);
+
+      // the line end
+      dataFile.println();
+
+      // close the file
+      dataFile.close();
+    }  // SD card
+
+    // WiFi to ThingSpeak
+
+    // Connect or reconnect to WiFi
+    if(WiFi.status() != WL_CONNECTED){
+      Serial.print("Attempting to connect to SSID: ");
+      Serial.println(SECRET_SSID);
+      while(WiFi.status() != WL_CONNECTED){
+        WiFi.begin(ssid, pass);  // Connect to WPA/WPA2 network. Change this line if using open or WEP network
+        Serial.print(".");
+        delay(5000);     
+      } 
+      Serial.println("\nConnected.");
+    }
+
+    // set the fields with the values
+    ThingSpeak.setField(1, indoorTemperature);
+    ThingSpeak.setField(2, humidity);
+    ThingSpeak.setField(3, outsideAirTemperature);
+  
+    // write to the ThingSpeak channel
+    int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+    if(x == 200){
+      Serial.println("Channel update successful.");
+    }
+    else{
+      Serial.println("Problem updating channel. HTTP error code " + String(x));
+    }
+
+  }  // end processing alarmEventFlag
+
+}  // main loop
+
+
+DateTime addSecondsToTime(int secondsToAdd, DateTime theTime) {
+  // the "unixtime()" function returns the DS3231 time
+  // as number of seconds in an unisgned long integer.
+  // NOTE TO FUSSY PEOPLE: this number might not equal  
+  // what you would expect for the conventional "Unix Time".
+  // It does not matter.
+  // For this purpose, we briefly need only a number of seconds.
+  uint32_t theTimeInSeconds = theTime.unixtime(); 
+  
+  // It turns out that a new DataTime variable can be defined
+  // by supplying a time as a number of seconds.
+  // (Technically, the DateTime object constructor is overloaded,
+  //  and this is one of the declarations for it.)
+  DateTime newTime(theTimeInSeconds + secondsToAdd);
+
+  // send the updated DateTime value back to the caller
+  return newTime;
+}
+
+void setTheAlarm(DateTime alarmTime) {
+
+  /*  Here is a copy of the declaration
+   *  of the DS3231 library function
+   *  that sets Alarm 1:
+   *  
+   *  void setA1Time(
+   *    byte A1Day, 
+   *    byte A1Hour, 
+   *    byte A1Minute, 
+   *    byte A1Second, 
+   *    byte AlarmBits, 
+   *    bool A1Dy, 
+   *    bool A1h12, 
+   *    bool A1PM
+   *  ); 
+  */
+
+    // set the alarm to the new time
+    RTClock.setA1Time(
+      alarmTime.day(),
+      alarmTime.hour(),
+      alarmTime.minute(),
+      alarmTime.second(),
+      0x00001100, // this mask means alarm when minutes and seconds match
+      false, false, false
+    );
+
+    // activate the alarm
+
+    /* Tricks I learned about how the alarm on the DS3231 
+     * signals an interrupt on the Arduino.
+     * 
+     * The alarm pin on the DS3231 is labeled, "SQW".
+     * The DS3231 sends signals by changing the voltage
+     * on its SQW pin. The voltaqge can be HIGH or LOW.
+     * 
+     * We want the voltage on SQW start as HIGH.
+     * DS3231 signals an alarm by changing the signal to LOW.
+     * 
+     * Arduino's hardware can detect the change in the voltage
+     * through digital pins having this special ability.
+     * The hardware then literally interrupts the CPU,
+     * causing it to switch over and run our special code.
+     * 
+     * A change from HIGH to LOW is called "FALLING".
+     * The "attachInterrupt()" code in the setup() block
+     * of this sketch tells Arduino to interrupt the CPU
+     * when it detects a FALLING signal from the DS3231.
+     * 
+     * After that happens, the SQW pin will remain LOW.
+     * The DS3231 cannot send any more "FALLING" signals
+     * as long as the SQW pin remains LOW.
+     * 
+     * What this means to us as code writers is that
+     * it is our job to tell the DS3231
+     * to restore the HIGH voltage on its SQW pin.
+     * We do this by "clearing" certain bits
+     * in two control registers on the DS3231.
+     * 
+     * The DS3231 library provides code statements 
+     * for this purpose. The trick, which I struggled
+     * for a while to understand, is that the 
+     * statement named "checkIfAlarm()" 
+     * has a non-obvious side effect.
+     * It clears one of those critical bits.
+     * It is the only statement in the DS3231 library
+     * that accomplishes this important step.
+     * Which means we have to use it even if we do not
+     * really need to check the status of the alarm.
+     */
+    RTClock.turnOffAlarm(1); // register 0Eh
+    RTClock.checkIfAlarm(1); // register 0Fh
+
+    // Now, we can turn on the alarm!
+    RTClock.turnOnAlarm(1);
+  
+}
+
+void set_Ten_Minute_Alarm(DateTime referenceTime) {
+  // calculate number of seconds to the next greater minute
+  int secondsUntilNextWholeTenMinutes = 600 - referenceTime.second();
+  //  allow extra minute if within 3 seconds
+  if (secondsUntilNextWholeTenMinutes < 3) {
+    secondsUntilNextWholeTenMinutes += 600;  
+  }
+  
+  // set alarm for next whole ten minute mark
+  setTheAlarm(
+    addSecondsToTime (
+      secondsUntilNextWholeTenMinutes,
+      referenceTime
+    )
+  );  
+}
+
+void printDateAndTime(DateTime referenceTime) {
+  // print the current date
+  Serial.print(referenceTime.month()); Serial.print("/");
+  Serial.print(referenceTime.day()); Serial.print("/");
+  Serial.print(referenceTime.year());
+  Serial.print("  ");
+
+  // print the current time
+  Serial.print(referenceTime.hour()); Serial.print(":");
+  if (referenceTime.minute() < 10) Serial.print("0");
+  Serial.print(referenceTime.minute()); Serial.print(":");
+  if (referenceTime.second() < 10) Serial.print("0");
+  Serial.print(referenceTime.second());
+   
+}
+
+float getOAT ()
+{
+  const double calibrateTherm = 1.08;
+  double therm = 0;
+  double thermAvg = 0;
+  char thermCount = 0;
+  while (thermCount < 15)
+  {
+    // the fixed resistor R2 in the circuit measures 99.3 kOhm
+    // estimate thermistor R1 resistance from divided voltage 
+    therm = ((1023.0 / analogRead(A7))-1)*99300 * calibrateTherm;
+    // display the calculated thermistor resistance in Ohms
+    Serial.print(therm);
+    Serial.print(" => ");
+    // convert thermistor resistance to temperature
+    // see github.com/iowadave/thermistors
+    // degrees Kelvin
+    therm = 1 / ((1.0/263.15) - (log(57670/therm) / 3936 ));
+    // degrees Celsius
+    therm = therm - 273.15;
+    // degrees Fahrenheit
+    therm = (therm * 1.8) + 32;
+    // display the calculated temperature in degerees Fahrenheit
+    Serial.println(therm);
+
+    // calculate cumulative moving average
+
+    thermAvg = (therm + (thermAvg * thermCount));
+    thermCount = thermCount + 1;
+    thermAvg = thermAvg / thermCount;
+    // repeat at 2-second intervals
+    delay(1000);
+    // until thermCount = 15
+  }
+
+  // display the averaged OAT as integer on the TM1637
+  int t = (int) round(thermAvg);
+  display.showNumberDec(t, false);
+
+  // return the averaged temperature
+  // typecast to float, matching definition of this function
+  // for thingspeak compatability
+  return (float) thermAvg;
+}
+
+
+/*
+float readDS18B20() {
+  byte i;
+  byte present = 0;
+  byte data[12];
+  float celsius, fahrenheit;
+  
+  ds1820.reset();
+  ds1820.select(DS_addr);
+  ds1820.write(0x44, 1);        // start conversion, with parasite power on at the end
+  
+  delay(1000);     // maybe 750ms is enough, maybe not
+  // we might do a ds.depower() here, but the reset will take care of it.
+  
+  present = ds1820.reset();
+  ds1820.select(DS_addr);    
+  ds1820.write(0xBE);         // Read Scratchpad
+
+  for ( i = 0; i < 9; i++) {           // we need 9 bytes
+    data[i] = ds1820.read();
+//    Serial.print(data[i], HEX);
+//    Serial.print(" ");
+  }
+//  Serial.print(" CRC=");
+//  Serial.print(OneWire::crc8(data, 8), HEX);
+//  Serial.println();
+
+  // Convert the data to actual temperature
+  // because the result is a 16 bit signed integer, it should
+  // be stored to an "int16_t" type, which is always 16 bits
+  // even when compiled on a 32 bit processor.
+  int16_t raw = (data[1] << 8) | data[0];
+  if (DS_is_type_s != 0) {
+    raw = raw << 3; // 9 bit resolution default
+    if (data[7] == 0x10) {
+      // "count remain" gives full 12 bit resolution
+      raw = (raw & 0xFFF0) + 12 - data[6];
+    }
+  } else {
+    byte cfg = (data[4] & 0x60);
+    // at lower res, the low bits are undefined, so let's zero them
+    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
+    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
+    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
+    //// default is 12 bit resolution, 750 ms conversion time
+  }
+  celsius = (float)raw / 16.0;
+  fahrenheit = celsius * 1.8 + 32.0;
+//  Serial.print("  Temperature = ");
+//  Serial.print(celsius);
+//  Serial.print(" Celsius, ");
+//  Serial.print(fahrenheit);
+//  Serial.println(" Fahrenheit");
+  return fahrenheit;
+  
+}
+*/
+// end of listing
