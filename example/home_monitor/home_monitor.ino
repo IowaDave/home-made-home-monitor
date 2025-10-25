@@ -47,10 +47,10 @@
   * Boston, MA  02111-1307  USA
   */
 
-/* The following libraries are included with Arduino IDE */
-#include <Wire.h>             // I2C for DS3231 (included with Arduino IDE)
-#include <SPI.h>              // SPI for SD card device (included with Arduino ODE)
-#include <SD.h>               // control SD card device (included with Arduino IDE)
+/* The following libraries come pre-installed with Arduino IDE */
+#include <Wire.h>             // for I2C communication with DS3231
+#include <SPI.h>              // for SPI communication with SD card device
+#include <SD.h>               // to read and write files on SD card device
 
 /* These additional libraries need to be installed using the Library Manager */
 #include <DHT.h>              // Adafruit library
@@ -244,11 +244,26 @@ void loop() {
     outsideAirTemperature = getOAT();               // returns Fahrenheit
     humidity = dht.readHumidity();                  // percent relative humidity
     indoorTemperature = dht.readTemperature(true);  // true selects Fahrenheit
-    // Check if any reads failed and exit early (to try again).
+    /* Check if any reads failed.
+     * If so, try up to ten more times before giving up.
+     */
+    if (isnan(humidity) || isnan(indoorTemperature)) {
+      int DHTattempt = 0;
+      while ( (DHTattempt < 10) &&
+              (isnan(humidity) || isnan(indoorTemperature))) {
+        humidity = dht.readHumidity();                  // percent relative humidity
+        indoorTemperature = dht.readTemperature(true);  // true selects Fahrenheit
+      DHTattempt += 1;  
+      }
+    }
+    /* if still failing, exit this attempt to log data */
     if (isnan(humidity) || isnan(indoorTemperature)) {
       Serial.println(F("Failed to read from DHT sensor!"));
       return;
     }
+
+    /* That concludes the procedure for reading the DHT22 sensor */
+
     // output the data as a space-delimited string to the serial monitor
     Serial.print("Indoor temperature: ");
     Serial.print(indoorTemperature);  
