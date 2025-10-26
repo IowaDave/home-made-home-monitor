@@ -1,4 +1,5 @@
 # home-made-home-monitor
+
 Build a home monitor system with an Arduino
 
 ![A screenshot showing graphs of temperature and humidity data for a house](images/frosty-morning.jpg)
@@ -32,6 +33,8 @@ Moreover, the program and the device libraries that support it combine to requir
 The second reason is that it calls for two Serial input-output connections in the hardware. One connection is for communication with a Serial Monitor program running on an attached computer. The second goes to the ESP8266 for internet access.
 
 I considered using the Arduino Software Serial library with an Uno-style board for the ESP8266 but decided to play it safe by sending all Serial I/O through hardware.
+
+<p><a href="#components">Back to List of Components</a></p>
 
 ## Arduino Device Code Libraries
 Most of the devices in this project are what I call &ldquo;semi-smart&rdquo; devices. It means they do part of the work internally, gathering, organizing and storing the information they can provide.
@@ -100,12 +103,15 @@ As we enter the second quarter of the 21st century we can choose alternative pro
 
 Briefly, Adafruit points out that more reliable performance may be obtained from newer sensors that use two, separate wires for communication, one for timing signals and the other for data.
 
+<p><a href="#components">Back to List of Components</a></p>
+
 <h2 id="thermistor"> Measure Outdoor Temperature with a Thermistor</h2>
+
 How simple it appears, dangling there outside a window under the patio roof! 
 
 ![Photo of a termistor suspended outdoors on wires that lead from inside the house around a window frame.](images/thermistor.jpg)
 
-A termistor is a type of resistor having impedence that varies with temperature. The temperature can be evaluated by placing it in series with a second, fixed resistor, forming a voltage divider. The Arduino can interpret the voltage as a number. A bit of arithmetic transforms the number into a temperature.  
+A termistor is a type of resistor having impedence that varies with temperature. The temperature can be evaluated by placing it in series with a second, fixed resistor, forming a voltage divider. The Arduino can interpret the voltage as a number. A bit of arithmetic transforms the number into a temperature.
 
 Several years ago I wrote a rather extensive article here on GitHub about using thermistors this way. Here is a link to it: [Thermistor-Thermometer](https://github.com/IowaDave/Thermistors).
 
@@ -131,7 +137,7 @@ float getOAT ()
     therm = ((1023.0 / analogRead(A7))-1)*99300 * calibrateTherm;
 
     /* send diagnostic output to the Serial Monitor */
-    
+
     // display the calculated thermistor resistance in Ohms
     Serial.print(therm);
     Serial.print(" => ");
@@ -164,12 +170,14 @@ float getOAT ()
    * typecasting it to float, 
    * to match the definition of this function
    * for compatability with ThingSpeak */
-   
+
   return (float) thermAvg;
 }
 ~~~
 
 This very economical apparatus reports temperatures that range within one to three degrees Fahrenheit of those given by more costly commercial devices and by the U.S. Weather Bureau. It is close enough for my purposes.
+
+<p><a href="#components">Back to List of Components</a></p>
 
 <h2 id="esp8266">ESP8266 Having AT Firmware Installed</h2>
 My project is designed to upload data to a remote server through an internet connection. An ESP8266 device enables it to connect to the internet through my home WiFi network.
@@ -229,7 +237,7 @@ Later, at ten-minute intervals during the loop() process, the following code use
     ThingSpeak.setField(1, indoorTemperature);
     ThingSpeak.setField(2, humidity);
     ThingSpeak.setField(3, outsideAirTemperature);
-  
+
     // write to the ThingSpeak channel
     int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
     // check result of upload; 200 indicates success
@@ -242,6 +250,8 @@ Later, at ten-minute intervals during the loop() process, the following code use
       Serial.println("Problem updating channel. HTTP error code " + String(x));
     }
 ~~~
+
+<p><a href="#components">Back to List of Components</a></p>
 
 ## SD Card Adapter
 Logging data to a remote server through the internet is all very well. However, to be on the safe side, why not also log it onto local storage.
@@ -324,7 +334,7 @@ The loop() procedure appends the actual data into the SD card file.
       if (clockData.second() < 10) dataFile.print("0");
       dataFile.print(clockData.second());
       dataFile.print("\t"); // tab
-    
+
       // write the data
       dataFile.print(indoorTemperature);  
       dataFile.print("\t"); // tab
@@ -340,4 +350,12 @@ The loop() procedure appends the actual data into the SD card file.
     }  // SD card
 ~~~
 
-There is more to write. I pause here in late October 2025. Tell the customers I have gone fishing.
+Some of these SD card adapters may have a wiring layout onboard which causes them to monopolize the SPI hardware. I gave up trying to fix that problem because time is finite and has other uses, and the SD card reader is really the only SPI device my project needs.
+
+<p><a href="#components">Back to List of Components</a></p>
+
+## There Is More To Say
+
+Not finished yet! I pause here in late October 2025. Tell the customers I have gone fishing.
+
+<p><a href="#components">Back to List of Components</a></p>
