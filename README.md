@@ -14,7 +14,7 @@ A combination of inexpensive components plus a non-commercial account with Thing
 * [An Arduino Mega2560 or similar development board](#development-board)
 * [DHT22 Humidity and Temperature Sensor](#dht22)
 * [A Thermistor, resistor, and a pair of long wires](#thermistor)
-* [ESP8266 controller having Expressif AT-type firmware installed]($esp8266)
+* [ESP8266 controller having Expressif AT-type firmware installed](#esp8266)
 * [SD card adapter](#sd-card-adapter)
 * DS3231 Real Time Clock module
 * TM1637 Display module
