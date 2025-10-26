@@ -62,6 +62,8 @@ Volunteers contribute libraries for most of the devices used in this project. Th
 
 The Manager shows the names of the people who contributed each library. I have identified such libraries in this project by including the contributors' names in parentheses.
 
+<p><a href="#components">Back to List of Components</a></p>
+
 <h2 id="dht22">DHT22 Humidity and Temperature Sensor</h2>
 This one measures temperature and humidity inside the house. I had some old ones on the shelf and they seem to work, so I use one here. I discuss contemporary controversy about these devices below, after showing the code.
 
